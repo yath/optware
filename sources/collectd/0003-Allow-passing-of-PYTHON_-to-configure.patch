@@ -1,0 +1,90 @@
+From aa507554d9a70e3144145981912ff73c77363c70 Mon Sep 17 00:00:00 2001
+From: Sebastian Schmidt <yath@yath.de>
+Date: Fri, 8 Jun 2012 21:40:00 +0200
+Subject: [PATCH 3/4] Allow passing of PYTHON_* to configure
+
+---
+ configure.in |   21 ++++++++++++---------
+ 1 file changed, 12 insertions(+), 9 deletions(-)
+
+diff --git a/configure.in b/configure.in
+index a5fb686..5dd40de 100644
+--- a/configure.in
++++ b/configure.in
+@@ -3275,7 +3275,7 @@ then
+ 	fi
+ fi
+ 
+-if test "x$with_python" = "xyes"
++if test "x$with_python" = "xyes" && test "x$PYTHON_CPPFLAGS" = "x"
+ then
+ 	AC_MSG_CHECKING([for Python CPPFLAGS])
+ 	python_include_path=`echo "import distutils.sysconfig;import sys;sys.stdout.write(distutils.sysconfig.get_python_inc())" | "$with_python_prog" 2>&1`
+@@ -3287,18 +3287,19 @@ then
+ 		with_python="no"
+ 	else
+ 		AC_MSG_RESULT([$python_include_path])
++        PYTHON_CPPFLAGS="-I$python_include_path"
+ 	fi
+ fi
+ 
+ if test "x$with_python" = "xyes"
+ then
+-	CPPFLAGS="-I$python_include_path $CPPFLAGS"
++	CPPFLAGS="$PYTHON_CPPFLAGS $CPPFLAGS"
+ 	AC_CHECK_HEADERS(Python.h,
+ 			 [with_python="yes"],
+ 			 [with_python="no ('Python.h' not found)"])
+ fi
+ 
+-if test "x$with_python" = "xyes"
++if test "x$with_python" = "xyes" && test "x$PYTHON_LDFLAGS" = "x"
+ then
+ 	AC_MSG_CHECKING([for Python LDFLAGS])
+ 	python_library_path=`echo "import distutils.sysconfig;import sys;sys.stdout.write(distutils.sysconfig.get_config_vars(\"LIBDIR\").__getitem__(0))" | "$with_python_prog" 2>&1`
+@@ -3310,10 +3311,11 @@ then
+ 		with_python="no"
+ 	else
+ 		AC_MSG_RESULT([$python_library_path])
++        PYTHON_LDFLAGS="-L$python_library_path"
+ 	fi
+ fi
+ 
+-if test "x$with_python" = "xyes"
++if test "x$with_python" = "xyes" && test "x$PYTHON_LIBS" = "x"
+ then
+ 	AC_MSG_CHECKING([for Python LIBS])
+ 	python_library_flags=`echo "import distutils.sysconfig;import sys;sys.stdout.write(distutils.sysconfig.get_config_vars(\"BLDLIBRARY\").__getitem__(0))" | "$with_python_prog" 2>&1`
+@@ -3325,13 +3327,14 @@ then
+ 		with_python="no"
+ 	else
+ 		AC_MSG_RESULT([$python_library_flags])
++        PYTHON_LIBS="$python_library_flags"
+ 	fi
+ fi
+ 
+ if test "x$with_python" = "xyes"
+ then
+-	LDFLAGS="-L$python_library_path $LDFLAGS"
+-	LIBS="$python_library_flags $LIBS"
++	LDFLAGS="$PYTHON_LDFLAGS $LDFLAGS"
++	LIBS="$PYTHON_LIBS $LIBS"
+ 
+ 	AC_CHECK_FUNC(PyObject_CallFunction,
+ 		      [with_python="yes"],
+@@ -3345,9 +3348,9 @@ LIBS="$SAVE_LIBS"
+ 
+ if test "x$with_python" = "xyes"
+ then
+-	BUILD_WITH_PYTHON_CPPFLAGS="-I$python_include_path"
+-	BUILD_WITH_PYTHON_LDFLAGS="-L$python_library_path"
+-	BUILD_WITH_PYTHON_LIBS="$python_library_flags"
++	BUILD_WITH_PYTHON_CPPFLAGS="$PYTHON_CPPFLAGS"
++	BUILD_WITH_PYTHON_LDFLAGS="$PYTHON_LDFLAGS"
++	BUILD_WITH_PYTHON_LIBS="$PYTHON_LIBS"
+ 	AC_SUBST(BUILD_WITH_PYTHON_CPPFLAGS)
+ 	AC_SUBST(BUILD_WITH_PYTHON_LDFLAGS)
+ 	AC_SUBST(BUILD_WITH_PYTHON_LIBS)
+-- 
+1.7.10
+

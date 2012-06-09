@@ -1,0 +1,53 @@
+From e5d4eaa460ab2cf50948137b7824b4148a6d31bd Mon Sep 17 00:00:00 2001
+From: Sebastian Schmidt <yath@yath.de>
+Date: Fri, 8 Jun 2012 22:34:17 +0200
+Subject: [PATCH 4/4] Deal with missing struct ip6_ext
+
+---
+ configure.in    |   12 ++++++++++++
+ src/utils_dns.h |    8 ++++++++
+ 2 files changed, 20 insertions(+)
+
+diff --git a/configure.in b/configure.in
+index 5dd40de..5dedd34 100644
+--- a/configure.in
++++ b/configure.in
+@@ -263,6 +263,18 @@ AC_CHECK_HEADERS(netinet/udp.h, [], [],
+ #endif
+ ])
+ 
++# For dns
++AC_CHECK_TYPES(ip6_ext, [], [],
++[#if HAVE_NETINET_IP_H
++# include <netinet/ip.h>
++#endif
++#ifdef HAVE_NETINET_IP_VAR_H
++# include <netinet/ip_var.h>
++#endif
++#if HAVE_NETINET_IP6_H
++# include <netinet/ip6.h>
++#endif])
++
+ # For cpu modules
+ AC_CHECK_HEADERS(sys/dkstat.h)
+ if test "x$ac_system" = "xDarwin"
+diff --git a/src/utils_dns.h b/src/utils_dns.h
+index 56213af..d96cbd9 100644
+--- a/src/utils_dns.h
++++ b/src/utils_dns.h
+@@ -90,4 +90,12 @@ const char *qtype_str(int t);
+ const char *opcode_str(int o);
+ const char *rcode_str (int r);
+ 
++#if !HAVE_IP6_EXT
++/* IPv6 extension header */
++struct ip6_ext {
++    uint8_t ip6e_nxt;
++    uint8_t ip6e_len;
++};
++#endif
++
+ #endif /* !COLLECTD_UTILS_DNS_H */
+-- 
+1.7.10
+
