@@ -1,6 +1,8 @@
 ###########################################################
 #
-# collectd
+# collectd - statistics collection and monitoring daemon
+#
+#    http://collectd.org/
 #
 ###########################################################
 
@@ -29,29 +31,38 @@ COLLECTD_MAINTAINER=Sebastian Schmidt <yath@yath.de>
 COLLECTD_DESCRIPTION=statistics collection and monitoring daemon
 COLLECTD_SECTION=utils
 COLLECTD_PRIORITY=optional
-COLLECTD_DEPENDS=
-COLLECTD_SUGGESTS=
-COLLECTD_CONFLICTS=
+COLLECTD_IPK_VERSION=1
 
-COLLECTD_BUILD_PERL ?= yes
+COLLECTD_CONFFILES=/opt/etc/collectd.conf
+COLLECTD_PATCHES=$(wildcard $(COLLECTD_SOURCE_DIR)/*.patch)
+COLLECTD_CPPFLAGS=-Wno-deprecated-declarations
+COLLECTD_LDFLAGS=
+
+# conditional builds
+# change this to yes once perl has been built with ithreads
+COLLECTD_BUILD_PERL ?= no
 COLLECTD_BUILD_PYTHON ?= yes
+COLLECTD_BUILD_SENSORS ?= $(if $(filter lm-sensors,$(PACKAGES)), yes, no)
 
-COLLECTD_CONFIGURE_DISABLE= \
+# --disable-foo for configure
+#  (put plugins here that should not be built)
+COLLECTD_CONFIGURE_DISABLE = \
 amqp apple_sensors battery contextswitch \
-curl_json dbi gmond ipmi ipvs java libvirt lpar \
+curl_json dbi ethstat gmond ipmi ipvs java libvirt lpar \
 madwifi mbmon memcachec modbus multimeter netapp netlink \
 notify_desktop notify_email numa nut onewire oracle \
 redis routeros tape ted tokyotyrant write_redis \
 write_mongodb xmms zfs_arc \
-lm_sensors \
 rrdcached varnish
 
 WHAT_TO_DO_WITH_IPK_DIR = :
 
-COLLECTD_LIBDIR=/opt/lib/collectd
-COLLECTD_MANDIR=/opt/man
 
+# convenience macro to convert e.g. lm_sensors to collectd-plugin-lm-sensors
 COLLECTD_PLUGIN_NAME = collectd-plugin-$(subst _,-,$(1))
+
+# defines the rules for building a specific plugin .ipk
+# eval the string returned.
 define DEF_COLLECTD_PLUGIN
   COLLECTD_CONFIGURE_ENABLE += $(1)
   COLLECTD_BUILD_DEPS += $(2)
@@ -89,6 +100,9 @@ define DEF_COLLECTD_PLUGIN
 		cd $$(BUILD_DIR); $$(IPKG_BUILD) $$(COLLECTD_PLUGIN_$(1)_IPK_DIR)
 		$$(WHAT_TO_DO_WITH_IPK_DIR) $$(COLLECTD_PLUGIN_$(1)_IPK_DIR)
 endef
+
+# defines the plugins to be built
+#$(eval $(call DEF_COLLECTD_PLUGIN, plugin, dependencies, description))
 $(eval $(call DEF_COLLECTD_PLUGIN,apache,libcurl,Apache httpd statistics))
 $(eval $(call DEF_COLLECTD_PLUGIN,apcups,,Statistics of UPSes by APC))
 $(eval $(call DEF_COLLECTD_PLUGIN,ascent,,AscentEmu player statistics))
@@ -104,7 +118,6 @@ $(eval $(call DEF_COLLECTD_PLUGIN,disk,,Disk usage statistics))
 $(eval $(call DEF_COLLECTD_PLUGIN,dns,libpcap,DNS traffic analysis))
 $(eval $(call DEF_COLLECTD_PLUGIN,email,,EMail statistics))
 $(eval $(call DEF_COLLECTD_PLUGIN,entropy,,Entropy statistics))
-$(eval $(call DEF_COLLECTD_PLUGIN,ethstat,,Stats from NIC driver))
 $(eval $(call DEF_COLLECTD_PLUGIN,exec,,Execution of external programs))
 $(eval $(call DEF_COLLECTD_PLUGIN,filecount,,Count files in directories))
 $(eval $(call DEF_COLLECTD_PLUGIN,fscache,,fscache statistics))
@@ -152,123 +165,99 @@ $(eval $(call DEF_COLLECTD_PLUGIN,unixsock,,Unixsock communication plugin))
 $(eval $(call DEF_COLLECTD_PLUGIN,uptime,,Uptime statistics))
 $(eval $(call DEF_COLLECTD_PLUGIN,users,,User statistics))
 $(eval $(call DEF_COLLECTD_PLUGIN,uuid,,UUID as hostname plugin))
-#$(eval $(call DEF_COLLECTD_PLUGIN,varnish,varnish,Varnish cache statistics))
 $(eval $(call DEF_COLLECTD_PLUGIN,vmem,,Virtual memory statistics))
 $(eval $(call DEF_COLLECTD_PLUGIN,vserver,,Linux VServer statistics))
 $(eval $(call DEF_COLLECTD_PLUGIN,wireless,,Wireless statistics))
 $(eval $(call DEF_COLLECTD_PLUGIN,write_graphite,,Graphite / Carbon output plugin))
 $(eval $(call DEF_COLLECTD_PLUGIN,write_http,libcurl,HTTP output plugin))
 
+
+#### conditional plugins ####
+
+### build perl? ###
 ifeq (yes,$(COLLECTD_BUILD_PERL))
 $(eval $(call DEF_COLLECTD_PLUGIN,perl,perl,Perl interpreter))
+# perl's ExtUtils::Embed is somewhat broken in optware.
+# try to pass the right[tm] settings below.
+
+# environment variables passed to configure
 COLLECTD_PERL_CONFIGURE_ENV = \
 	PERL_CFLAGS="-I$(STAGING_LIB_DIR)/$(PERL_LIB_CORE_DIR)" \
 	PERL_LDFLAGS="-Wl,-rpath,/opt/lib/$(PERL_LIB_CORE_DIR) \
 		-L$(STAGING_LIB_DIR)/$(PERL_LIB_CORE_DIR) \
 		-L/opt/lib/perl5/$(PERL_VERSION)/$(PERL_ARCH)/CORE" \
 	PERL_LIBS="-lperl -lm -lcrypt -lpthread"
-COLLECTD_PERL_CONFIGURE_OPTS = --with-libperl=$(PERL_HOSTPERL)
-else
-COLLECTD_CONFIGURE_DISABLE += perl
-endif
 
+# path to host perl installation
+COLLECTD_PERL_CONFIGURE_OPTS = --with-libperl=$(PERL_HOSTPERL)
+
+else
+# no perl :(
+COLLECTD_CONFIGURE_DISABLE += perl
+
+endif
+### end build perl? ###
+
+### build python? ###
 ifeq (yes,$(COLLECTD_BUILD_PYTHON))
 $(eval $(call DEF_COLLECTD_PLUGIN,python,python27,Python interpreter))
-# COLLECTD_BUILD_DEPS += python3-host
+COLLECTD_BUILD_DEPS += python27-host
+# distutils.sysconfig returns libpython23.a instead of -lpython sometimes
+# which causes the link to fail. correct that below.
+
+# value for PYTHONPATH environment variable
 COLLECTD_PYTHONPATH = $(STAGING_LIB_DIR)/python$(PYTHON27_VERSION_MAJOR)
+
+# host python
 COLLECTD_PYTHON = $(HOST_STAGING_PREFIX)/bin/python$(PYTHON27_VERSION_MAJOR)
+
+# the libraries with libfoo.{a,so} replaced by -lfoo
 COLLECTD_PYTHON_LIBS = $(shell PYTHONPATH="$(COLLECTD_PYTHONPATH)" $(COLLECTD_PYTHON) -c \
 'import distutils.sysconfig;l=distutils.sysconfig.get_config_vars("BLDLIBRARY")[0];\
 import re;l=re.sub(r"\blib(.*)\.(a|so)\b", r"-l\1", l);import sys;sys.stdout.write(l)')
+
+# environment passed to configure
 COLLECTD_PYTHON_CONFIGURE_ENV = PYTHONPATH="$(COLLECTD_PYTHONPATH)" PYTHON_LIBS="$(COLLECTD_PYTHON_LIBS)"
+
+# arguments passed to configure
 COLLECTD_PYTHON_CONFIGURE_OPTS = --with-python=$(COLLECTD_PYTHON)
+
 else
+# no python
 COLLECTD_CONFIGURE_DISABLE += python
+
 endif
+### end build python? ###
 
-#
-# COLLECTD_IPK_VERSION should be incremented when the ipk changes.
-#
-COLLECTD_IPK_VERSION=1
+### build lm_sensors? ###
+ifeq (yes,$(COLLECTD_BUILD_SENSORS))
+# this is untested!
+$(eval $(call DEF_COLLECTD_PLUGIN,lm_sensors,lm-sensors,lm_sensors statistics))
+else
+COLLECTD_CONFIGURE_DISABLE += lm_sensors
+endif
+### end build lm_sensors? ###
 
-#
-# COLLECTD_CONFFILES should be a list of user-editable files
-#COLLECTD_CONFFILES=/opt/etc/collectd.conf /opt/etc/init.d/SXXcollectd
-
-#
-# COLLECTD_PATCHES should list any patches, in the the order in
-# which they should be applied to the source code.
-#
-COLLECTD_PATCHES=$(wildcard $(COLLECTD_SOURCE_DIR)/*.patch)
-
-#
-# If the compilation of the package requires additional
-# compilation or linking flags, then list them here.
-#
-COLLECTD_CPPFLAGS=-Wno-deprecated-declarations
-COLLECTD_LDFLAGS=
-
-#
-# COLLECTD_BUILD_DIR is the directory in which the build is done.
-# COLLECTD_SOURCE_DIR is the directory which holds all the
-# patches and ipkg control files.
-# COLLECTD_IPK_DIR is the directory in which the ipk is built.
-# COLLECTD_IPK is the name of the resulting ipk files.
-#
-# You should not change any of these variables.
-#
 COLLECTD_BUILD_DIR=$(BUILD_DIR)/collectd
 COLLECTD_SOURCE_DIR=$(SOURCE_DIR)/collectd
 COLLECTD_IPK_DIR=$(BUILD_DIR)/collectd-$(COLLECTD_VERSION)-ipk
 COLLECTD_IPK=$(BUILD_DIR)/collectd_$(COLLECTD_VERSION)-$(COLLECTD_IPK_VERSION)_$(TARGET_ARCH).ipk
+COLLECTD_LIBDIR=/opt/lib/collectd
+COLLECTD_MANDIR=/opt/man
 
-.PHONY: collectd-source collectd-unpack collectd collectd-stage collectd-ipk collectd-clean collectd-dirclean collectd-check
-
-#
 # This is the dependency on the source code.  If the source is missing,
 # then it will be fetched from the site using wget.
-#
 $(DL_DIR)/$(COLLECTD_SOURCE):
 	$(WGET) -P $(@D) $(COLLECTD_SITE)/$(@F) || \
 	$(WGET) -P $(@D) $(SOURCES_NLO_SITE)/$(@F)
 
-#
 # The source code depends on it existing within the download directory.
 # This target will be called by the top level Makefile to download the
 # source code's archive (.tar.gz, .bz2, etc.)
-#
+.PHONY: collectd-source
 collectd-source: $(DL_DIR)/$(COLLECTD_SOURCE) $(COLLECTD_PATCHES)
 
-# reduce/uniq helper function, from http://www.cmcrossroads.com/ask-mr-make/10025-gnu-make-user-defined-functions-part-1
-COLLECTD_reduce = $(if $(strip $2),$(call COLLECTD_reduce,$1,$(wordlist 2,$(words $2),$2),$(call $1,$(firstword $2),$3)),$3)
-COLLECTD_check_uniq = $(if $(filter $1,$2),$2,$2 $1)
-COLLECTD_uniq = $(call COLLECTD_reduce,COLLECTD_check_uniq,$1)
-
-#
-# This target unpacks the source code in the build directory.
-# If the source archive is not .tar.gz or .tar.bz2, then you will need
-# to change the commands here.  Patches to the source code are also
-# applied in this target as required.
-#
-# This target also configures the build within the build directory.
-# Flags such as LDFLAGS and CPPFLAGS should be passed into configure
-# and NOT $(MAKE) below.  Passing it to configure causes configure to
-# correctly BUILD the Makefile with the right paths, where passing it
-# to Make causes it to override the default search paths of the compiler.
-#
-# If the compilation of the package requires other packages to be staged
-# first, then do that first (e.g. "$(MAKE) <bar>-stage <baz>-stage").
-#
-# If the package uses  GNU libtool, you should invoke $(PATCH_LIBTOOL) as
-# shown below to make various patches to it.
-#
-# XXX add make/collectd.mk back
-
-# doesn't hurt if one is not found during configure.
-# netsnmp must be specified directly to the net-snmp-config binary, the configure
-# script is broken (tests for +x, which is, surprise, also true for a directory).
-COLLECTD_STAGED_LIBS = libiptc libmemcached libmysql libvarnish libsensors python
-
+# unpacks and patches the source
 $(COLLECTD_BUILD_DIR)/.source: $(DL_DIR)/$(COLLECTD_SOURCE) $(COLLECTD_PATCHES)
 	rm -rf $(BUILD_DIR)/$(COLLECTD_DIR) $(@D)
 	$(COLLECTD_UNZIP) $(DL_DIR)/$(COLLECTD_SOURCE) | tar -C $(BUILD_DIR) -xvf -
@@ -282,6 +271,19 @@ $(COLLECTD_BUILD_DIR)/.source: $(DL_DIR)/$(COLLECTD_SOURCE) $(COLLECTD_PATCHES)
 	autoreconf -vif $(@D)
 	touch $@
 
+# the libraries that might be staged, doesn't hurt if one is not found during
+# configure.
+# netsnmp must be specified directly to the net-snmp-config binary, the configure
+# script is broken (tests for +x, which is, surprise, also true for a directory).
+COLLECTD_STAGED_LIBS = libiptc libmemcached libmysql libvarnish libsensors python
+
+# reduce/uniq helper function, from http://www.cmcrossroads.com/ask-mr-make/10025-gnu-make-user-defined-functions-part-1
+.PHONY: COLLECTD_reduce COLLECTD_check_uniq COLLECTD_uniq
+COLLECTD_reduce = $(if $(strip $2),$(call COLLECTD_reduce,$1,$(wordlist 2,$(words $2),$2),$(call $1,$(firstword $2),$3)),$3)
+COLLECTD_check_uniq = $(if $(filter $1,$2),$2,$2 $1)
+COLLECTD_uniq = $(call COLLECTD_reduce,COLLECTD_check_uniq,$1)
+
+# builds the build dependencies and runs configure
 $(COLLECTD_BUILD_DIR)/.configured: $(COLLECTD_BUILD_DIR)/.source make/collectd.mk
 	builddeps="$(addsuffix -stage,$(call COLLECTD_uniq,$(COLLECTD_BUILD_DEPS)))"; \
 	if [ ! -z "$$builddeps" ]; then \
@@ -313,35 +315,29 @@ $(COLLECTD_BUILD_DIR)/.configured: $(COLLECTD_BUILD_DIR)/.source make/collectd.m
 	$(PATCH_LIBTOOL) $(@D)/libtool
 	touch $@
 
+.PHONY: collectd-unpack
 collectd-unpack: $(COLLECTD_BUILD_DIR)/.configured
 
-#
 # This builds the actual binary.
-#
 $(COLLECTD_BUILD_DIR)/.built: $(COLLECTD_BUILD_DIR)/.configured
 	rm -f $@
 	$(MAKE) -C $(@D)
 	touch $@
 
-#
 # This is the build convenience target.
-#
+.PHONY: collectd
 collectd: $(COLLECTD_BUILD_DIR)/.built
 
-#
-# If you are building a library, then you need to stage it too.
-#
+# staging target
 $(COLLECTD_BUILD_DIR)/.staged: $(COLLECTD_BUILD_DIR)/.built
 	rm -f $@
 	$(MAKE) -C $(@D) DESTDIR=$(STAGING_DIR) install
 	touch $@
 
+.PHONY: collectd-stage
 collectd-stage: $(COLLECTD_BUILD_DIR)/.staged
 
-#
-# This rule creates a control file for ipkg.  It is no longer
-# necessary to create a seperate control file under sources/collectd
-#
+# This rule creates a control file for ipkg
 $(COLLECTD_IPK_DIR)/CONTROL/control:
 	@install -d $(@D)
 	@rm -f $@
@@ -357,18 +353,9 @@ $(COLLECTD_IPK_DIR)/CONTROL/control:
 	@echo "Suggests: $(COLLECTD_SUGGESTS)" >>$@
 	@echo "Conflicts: $(COLLECTD_CONFLICTS)" >>$@
 
-#
-# This builds the IPK file.
-#
-# Binaries should be installed into $(COLLECTD_IPK_DIR)/opt/sbin or $(COLLECTD_IPK_DIR)/opt/bin
-# (use the location in a well-known Linux distro as a guide for choosing sbin or bin).
-# Libraries and include files should be installed into $(COLLECTD_IPK_DIR)/opt/{lib,include}
-# Configuration files should be installed in $(COLLECTD_IPK_DIR)/opt/etc/collectd/...
-# Documentation files should be installed in $(COLLECTD_IPK_DIR)/opt/doc/collectd/...
-# Daemon startup scripts should be installed in $(COLLECTD_IPK_DIR)/opt/etc/init.d/S??collectd
-#
-# You may need to patch your application to make it use these locations.
 
+# installs collectd with all plugins into $(COLLECTD_IPK_DIR).
+# the plugins will be removed from there by the $(COLLECTD_PLUGINS_IPKS) targets.
 .PHONY: collectd-install
 collectd-install: $(COLLECTD_BUILD_DIR)/.built
 	rm -rf $(COLLECTD_IPK_DIR) $(COLLECTD_PLUGINS_IPK_DIRS) \
@@ -378,30 +365,30 @@ collectd-install: $(COLLECTD_BUILD_DIR)/.built
 	# build static libraries - they are built and installed. dunno what's wrong there,
 	# just delete them here
 	find $(COLLECTD_IPK_DIR) -name \*.a -o -name \*.la -exec rm -f '{}' \;
-	# TODO: remove unnecessary manpages
+	# TODO: remove unnecessary files
 
+# This builds the IPK file for collectd _without_ plugins.
+# The plugins' targets move their files away from $(COLLECTD_IPK_DIR),
+# if we reach the $(COLLECTD_IPK) target only the base package is left.
 $(COLLECTD_IPK): collectd-install $(COLLECTD_PLUGINS_IPKS)
 	$(MAKE) $(COLLECTD_IPK_DIR)/CONTROL/control
 	echo $(COLLECTD_CONFFILES) | sed -e 's/ /\n/g' > $(COLLECTD_IPK_DIR)/CONTROL/conffiles
 	cd $(BUILD_DIR); $(IPKG_BUILD) $(COLLECTD_IPK_DIR)
 	$(WHAT_TO_DO_WITH_IPK_DIR) $(COLLECTD_IPK_DIR)
 
-#
 # This is called from the top level makefile to create the IPK file.
-#
+.PHONY: collectd-ipk
 collectd-ipk: $(COLLECTD_IPK)
 
-#
 # This is called from the top level makefile to clean all of the built files.
-#
+.PHONY: collectd-clean
 collectd-clean:
 	rm -f $(COLLECTD_BUILD_DIR)/.built
 	-$(MAKE) -C $(COLLECTD_BUILD_DIR) clean
 
-#
 # This is called from the top level makefile to clean all dynamically created
 # directories.
-#
+.PHONY: collectd-dirclean
 collectd-dirclean:
 	rm -rf $(BUILD_DIR)/$(COLLECTD_DIR) $(COLLECTD_BUILD_DIR) $(COLLECTD_IPK_DIR) $(COLLECTD_IPK)
 #
